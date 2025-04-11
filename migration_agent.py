@@ -264,10 +264,10 @@ class MigrationAgent:
                 analysis["migration_plan"] = migration_plan
                 
             # Run moderne-cli to get the recipe
-            if analysis.get("is_eligible_for_java_upgrade"):
-                keyword = f"migrate to java {analysis['latest_java_version']}"
-            elif analysis.get("is_eligible_for_spring_upgrade"):
+            if analysis.get("is_eligible_for_spring_upgrade"):
                 keyword = f"migrate to spring boot {analysis['latest_spring_boot_version']}"
+            elif analysis.get("is_eligible_for_java_upgrade"):
+                keyword = f"migrate to java {analysis['latest_java_version']}"
             else:
                 keyword = ""
             
