@@ -5,6 +5,7 @@ import requests
 from fastmcp import FastMCP, Tool, Message
 import subprocess
 import logging
+import re
 
 # Initialize logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -194,6 +195,7 @@ class MigrationAgent:
             with open(r'C:\Users\rajap\moderne_recipes.json', 'r') as file:
                 recipes = json.load(file)
             
+            # Try to find an exact match first
             for recipe in recipes:
                 if migration_plan_keyword.lower() in recipe['name'].lower() or migration_plan_keyword.lower() in recipe['description'].lower():
                     logger.debug(f"Selected recipe: {recipe['name']}")
@@ -201,8 +203,55 @@ class MigrationAgent:
                     moderne_recipe_command = f"mod run . --recipe {recipe_name}"
                     return recipe['name'], moderne_recipe_command
             
-            logger.debug("No matching recipe found in JSON file")
-            return "No matching recipes found", ""
+            # Extract major and minor version for partial matching
+            version_parts = migration_plan_keyword.split()
+            version = next((part for part in version_parts if part.replace('.', '').isdigit()), None)
+            if version:
+                major_minor_version = '.'.join(version.split('.')[:2])
+            else:
+                major_minor_version = None
+            
+            # Collect potential partial matches
+            logger.debug("No exact match found, collecting potential partial matches")
+            potential_matches = []
+            for recipe in recipes:
+                if major_minor_version and major_minor_version in recipe['name']:
+                    potential_matches.append(recipe)
+            
+            # Use LLM to score and select the best match
+            if potential_matches:
+                logger.debug("Passing potential matches to LLM for scoring")
+                prompt = "Select the best match for migration based on the following options:\n"
+                for i, recipe in enumerate(potential_matches, start=1):
+                    prompt += f"[{i}] {recipe['name']}: {recipe['description']}\n"
+                prompt += "\nChoose the most relevant option for the migration plan."
+                
+                logger.debug(f"LLM Prompt: {prompt}")
+                response = model.generate_content(prompt)
+                logger.debug(f"LLM Response: {response.text}")
+                try:
+                    # Validate and parse the response
+                    response_text = response.text.strip()
+                    match = re.search(r"\[(\d+)\]", response_text)
+                    if match:
+                        best_match_index = int(match.group(1)) - 1
+                        if 0 <= best_match_index < len(potential_matches):
+                            best_match = potential_matches[best_match_index]
+                            logger.debug(f"Selected best match recipe: {best_match['name']}")
+                            recipe_name = best_match['id'].split('.')[-1]
+                            moderne_recipe_command = f"mod run . --recipe {recipe_name}"
+                            return best_match['name'], moderne_recipe_command
+                        else:
+                            logger.error("LLM returned an invalid index")
+                    else:
+                        logger.error("LLM response does not contain a valid index")
+                except (ValueError, IndexError) as e:
+                    logger.error(f"Error parsing LLM response: {str(e)}")
+            
+            # If no match is found, suggest external resources
+            logger.debug("No matching recipe found in JSON file, suggesting external resources")
+            external_resources = "Consider searching for migration guides or blog posts online."
+            return "No matching recipes found", external_resources
         except FileNotFoundError:
             logger.error("moderne_recipes.json file not found")
             return "Recipes file not found", ""
@@ -251,8 +300,10 @@ class MigrationAgent:
         """
         
         try:
+            logger.debug(f"LLM Prompt: {prompt}")
             logger.debug("Generating migration plan using Gemini LLM")
             response = model.generate_content(prompt)
+            logger.debug(f"LLM Response: {response.text}")
             migration_plan = response.text
             
             # Try to parse as JSON and extract just the migration plan part

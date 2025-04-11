@@ -127,7 +127,7 @@ def main():
         return 1
     
     # Ask if user wants to try interactive mode
-    run_interactive_mode()
+    # run_interactive_mode()
     
     print_section("Thank You", 
         """
