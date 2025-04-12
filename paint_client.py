@@ -163,14 +163,14 @@ Respond with EXACTLY ONE of these formats:
    FUNCTION_CALL: function_name|param1|param2|...
    The parameters must match the required input types for the function.
    
-   Example: for analyzeProject(project_name:str), use:
+   Example: for analyzeProject(), use:
    FUNCTION_CALL: analyzeProject
 
-   Example: for migrationPlan(current_jdk:str), use:
-   FUNCTION_CALL: migrationPlan|1.8
+   Example: for migrationPlan(input_data: ProjectAnalysis), use:
+   FUNCTION_CALL: migrationPlan|project_analysis_json
 
    Example: For mod_build(project_name:str), use:
-   FUNCTION_CALL: mod_build
+   FUNCTION_CALL: mod_build|
 
    Example: For mod_upgrade(recipe:str), use:
    FUNCTION_CALL: mod_upgrade|recipe
@@ -186,13 +186,13 @@ Make sure to provide parameters in the correct order as specified in the functio
 
                 # Initial query for math operation
                 projects_base_path = os.getenv("PROJECTS_BASE_PATH")
-                query = f"Perform an analysis of the project at {projects_base_path}"
+                query = f"Perform an analysis of the projects. Then prepare a migration plan for the projects from the json result"
 
                 logger.info(f"Starting with query: {query}")
                 
                 # Use global iteration variables
                 iteration = 0
-                max_iterations = 1
+                max_iterations = 2
                 last_response = None
                 iteration_response = []
                 
@@ -221,14 +221,19 @@ Make sure to provide parameters in the correct order as specified in the functio
                         _, function_info = response_text.split(":", 1)
                         parts = [p.strip() for p in function_info.split("|")]
                         func_name, params = parts[0], parts[1:]
-                        
+                        length = len(params)
+                        logger.info(f"Length of params: {length}")
                         logger.info(f"Calling function {func_name} with params {params}")
                         try:
                             # Determine which session to use based on the function name
                             if func_name in [tool.name for tool in moderne_tools]:
                                 result = await moderne_session.call_tool(func_name, params)
                             elif func_name in [tool.name for tool in maven_tools]:
-                                result = await maven_session.call_tool(func_name)
+                                if length == 0:
+                                    result = await maven_session.call_tool(func_name)
+                                else:
+                                    logger.info(f"params[0]: {params[0]}")
+                                    result = await maven_session.call_tool(func_name, params[0])
                             else:
                                 logger.error(f"Unknown function: {func_name}")
                                 continue

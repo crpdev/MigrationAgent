@@ -9,6 +9,21 @@ from typing import List, Dict, Optional, Any, Union
 import google.generativeai as genai
 from google.generativeai import GenerativeModel
 from dotenv import load_dotenv
+from pydantic import BaseModel
+
+class ProjectDetails(BaseModel):
+    success: bool
+    project_name: str
+    jdk_version: Optional[str]
+    spring_boot_version: Optional[str]
+    all_jdk_versions: List[str]
+    all_spring_boot_versions: List[str]
+
+class ProjectAnalysis(BaseModel):
+    success: bool
+    projects: List[ProjectDetails]
+    total_projects: int
+    analyzed_projects: int
 
 # Load environment variables
 load_dotenv()
@@ -329,24 +344,41 @@ def get_latest_java_version(llm: GenerativeModel) -> str:
         logger.info("Falling back to default version: 21")
         return "21"
 
-def score_recipe_match(recipe: Dict, target_version: str, llm: GenerativeModel) -> float:
+def get_latest_spring_boot_version(llm: GenerativeModel) -> str:
+    """Use Gemini LLM to identify the latest stable Spring Boot version."""
+    logger.debug("Requesting latest Spring Boot version from LLM")
+    try:
+        prompt = """What is the latest stable version of Spring Boot available for production use?
+        Respond with ONLY the version number (e.g., '3.2.1'), nothing else."""
+        
+        logger.debug(f"Sending prompt to LLM: {prompt}")
+        response = llm.generate_content(prompt)
+        latest_version = response.text.strip()
+        logger.info(f"LLM identified latest Spring Boot version: {latest_version}")
+        return latest_version
+    except Exception as e:
+        logger.error("Error getting latest Spring Boot version from LLM", exc_info=True)
+        logger.info("Falling back to default version: 3.2.1")
+        return "3.2.1"
+
+def score_recipe_match(recipe: Dict, target_version: str, is_spring_boot: bool, llm: GenerativeModel) -> float:
     """Use LLM to score how well a recipe matches the migration goal."""
-    logger.debug(f"Scoring recipe match for target version: {target_version}")
+    logger.debug(f"Scoring recipe match for {'Spring Boot' if is_spring_boot else 'Java'} version: {target_version}")
     logger.debug(f"Recipe being scored: {recipe['name']}")
     
     try:
-        prompt = f"""As a Java migration expert, score how well this recipe matches the migration goal.
+        prompt = f"""As a Java and Spring Boot migration expert, score how well this recipe matches the migration goal.
         
-        Migration Goal: Migrate to Java {target_version}
+        Migration Goal: {'Migrate to Spring Boot' if is_spring_boot else 'Migrate to Java'} {target_version}
         
         Recipe:
         {json.dumps(recipe, indent=2)}
         
         Respond with EXACTLY a number between 0 and 100, where:
-        - 100 means perfect match (exact match for Java {target_version} migration)
-        - 75+ means very relevant (mentions Java upgrade to similar version)
-        - 50+ means somewhat relevant (mentions Java but different version)
-        - 25+ means slightly relevant (mentions upgrades but not Java specific)
+        - 100 means perfect match (exact match for {'Spring Boot' if is_spring_boot else 'Java'} {target_version} migration)
+        - 75+ means very relevant (mentions {'Spring Boot' if is_spring_boot else 'Java'} upgrade to similar version)
+        - 50+ means somewhat relevant (mentions {'Spring Boot' if is_spring_boot else 'Java'} but different version)
+        - 25+ means slightly relevant (mentions upgrades but not specific to {'Spring Boot' if is_spring_boot else 'Java'})
         - 0 means not relevant at all"""
 
         logger.debug(f"Sending scoring prompt to LLM")
@@ -358,47 +390,97 @@ def score_recipe_match(recipe: Dict, target_version: str, llm: GenerativeModel) 
         logger.error(f"Error scoring recipe '{recipe['name']}'", exc_info=True)
         return 0
 
-@mcp.tool(name="migrationPlan", description="Generate migration plan based on JDK version")
-def migration_plan(args: Union[List[str], Dict[str, Any]]) -> dict:
+def find_best_recipe(recipes: List[Dict], target_version: str, is_spring_boot: bool, llm: GenerativeModel) -> Optional[Dict]:
+    """Find the best matching recipe for the target version."""
+    logger.info(f"Finding best recipe for {'Spring Boot' if is_spring_boot else 'Java'} version {target_version}")
+    
+    search_pattern = f"migrate to {'spring boot' if is_spring_boot else 'java'} {target_version}"
+    logger.debug(f"Searching for pattern: {search_pattern}")
+    
+    exact_matches = [
+        recipe for recipe in recipes
+        if search_pattern.lower() in recipe["name"].lower()
+    ]
+    logger.debug(f"Found {len(exact_matches)} exact matches")
+
+    if exact_matches:
+        match = exact_matches[0]
+        logger.info(f"Using exact match: {match['name']}")
+        return {
+            "recipe_id": match["id"],
+            "recipe_name": match["name"],
+            "recipe_description": match.get("description", ""),
+            "match_type": "exact"
+        }
+
+    logger.info("No exact match found, scoring all recipes")
+    scored_recipes = []
+    for recipe in recipes:
+        logger.debug(f"Scoring recipe: {recipe['name']}")
+        score = score_recipe_match(recipe, target_version, is_spring_boot, llm)
+        scored_recipes.append((recipe, score))
+
+    scored_recipes.sort(key=lambda x: x[1], reverse=True)
+    logger.debug("Recipes sorted by score")
+    
+    if scored_recipes and scored_recipes[0][1] > 70:
+        best_match = scored_recipes[0][0]
+        score = scored_recipes[0][1]
+        logger.info(f"Selected best match: {best_match['name']} (score: {score})")
+        return {
+            "recipe_id": best_match["id"],
+            "recipe_name": best_match["name"],
+            "recipe_description": best_match.get("description", ""),
+            "match_type": "scored",
+            "match_score": score
+        }
+    
+    return None
+
+@mcp.tool(name="migrationPlan", description="Generate migration plan based on project analysis")
+def migration_plan(input_data: ProjectAnalysis) -> dict:
     """
-    Generate migration plan based on JDK version.
+    Generate migration plan for a list of projects.
     
     Args:
-        args: Either a list of arguments where first item is project name,
-              or a dictionary with 'content' key containing project name
+        args: Dictionary containing analysis results with project versions
     """
     try:
         logger.info("=== Starting migrationPlan ===")
-        logger.debug(f"Received args: {args}")
+        logger.debug(f"Received args: {input_data}")
         
-        # Handle both list and dict formats
-        if isinstance(args, list):
-            if not args:
-                logger.error("Empty arguments list")
-                return {"success": False, "error": "No project name provided"}
-            project_name = args[0]
-        else:
-            project_name = args.get("content")
+        # # Parse input projects
+        # if not args or not isinstance(args, dict):
+        #     logger.error("Invalid arguments format")
+        #     return {"success": False, "error": "Invalid arguments format"}
             
-        if not project_name:
-            logger.error("No project name provided in args")
-            return {"success": False, "error": "No project name provided"}
-            
-        logger.info(f"Starting migration plan generation for project: {project_name}")
+        # input_data = args.get("content", "{}")
+        if isinstance(input_data, str):
+            input_data = json.loads(input_data)
         
-        # First analyze the project to get current JDK version
-        analysis_result = analyze_project_impl(project_name)
-        if not analysis_result.get("success", False):
-            logger.error("Failed to analyze project")
-            return analysis_result
-            
-        current_jdk = analysis_result.get("jdk_version")
-        if not current_jdk:
-            logger.error("Could not determine current JDK version")
-            return {"success": False, "error": "Could not determine current JDK version"}
-            
-        logger.info(f"Current JDK version: {current_jdk}")
+        logger.debug(f"Parsed input data: {input_data}")
         
+        if not input_data.get("success") or not input_data.get("projects"):
+            logger.error("Invalid input data format or no projects found")
+            return {"success": False, "error": "Invalid input data format or no projects found"}
+            
+        # Convert string project data to dictionaries
+        try:
+            projects_data = []
+            for project_str in input_data["projects"]:
+                # Replace single quotes with double quotes for valid JSON
+                if isinstance(project_str, str):
+                    project_str = project_str.replace("'", '"')
+                    project_dict = json.loads(project_str)
+                else:
+                    project_dict = project_str
+                projects_data.append(project_dict)
+            
+            logger.debug(f"Parsed projects data: {projects_data}")
+        except Exception as e:
+            logger.error(f"Error parsing project data: {e}", exc_info=True)
+            return {"success": False, "error": f"Error parsing project data: {str(e)}"}
+            
         # Initialize Gemini
         load_dotenv()
         GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -410,10 +492,12 @@ def migration_plan(args: Union[List[str], Dict[str, Any]]) -> dict:
         llm = GenerativeModel("gemini-pro")
         logger.debug("Gemini LLM initialized successfully")
 
+        # Get latest versions
         latest_java = get_latest_java_version(llm)
-        logger.info(f"Target Java version: {latest_java}")
+        latest_spring = get_latest_spring_boot_version(llm)
+        logger.info(f"Latest versions - Java: {latest_java}, Spring Boot: {latest_spring}")
         
-        logger.debug("Loading Moderne recipes")
+        # Load Moderne recipes
         try:
             with open("C:\\Users\\rajap\\moderne_recipes.json", 'r') as f:
                 recipes = json.load(f)
@@ -422,61 +506,57 @@ def migration_plan(args: Union[List[str], Dict[str, Any]]) -> dict:
             logger.error("Failed to load recipes file", exc_info=True)
             return {"success": False, "error": f"Could not load recipes: {str(e)}"}
 
-        search_pattern = f"migrate to java {latest_java}"
-        logger.debug(f"Searching for pattern: {search_pattern}")
+        # Process each project
+        updated_projects = []
+        for project in projects_data:
+            if not project.get("success", False):
+                logger.warning(f"Skipping failed project: {project}")
+                continue
+                
+            logger.info(f"Processing project: {project.get('project_name')}")
+            
+            project_update = project.copy()
+            project_update["latest_jdk_version"] = latest_java
+            project_update["latest_spring_boot_version"] = latest_spring
+            
+            current_jdk = project.get("jdk_version")
+            current_spring = project.get("spring_boot_version")
+            
+            # Determine if updates are needed
+            needs_java_update = current_jdk and current_jdk != latest_java
+            needs_spring_update = current_spring and current_spring != latest_spring
+            
+            if needs_spring_update or needs_java_update:
+                # Prefer Spring Boot migration if both updates are needed
+                if needs_spring_update:
+                    logger.info(f"Finding Spring Boot migration recipe for version {latest_spring}")
+                    recipe_match = find_best_recipe(recipes, latest_spring, True, llm)
+                    if recipe_match:
+                        project_update["migration_recipe"] = recipe_match
+                        updated_projects.append(project_update)
+                        continue
+                
+                # Fall back to Java migration if Spring Boot recipe not found or only Java needs update
+                if needs_java_update:
+                    logger.info(f"Finding Java migration recipe for version {latest_java}")
+                    recipe_match = find_best_recipe(recipes, latest_java, False, llm)
+                    if recipe_match:
+                        project_update["migration_recipe"] = recipe_match
+                
+            updated_projects.append(project_update)
         
-        exact_matches = [
-            recipe for recipe in recipes
-            if search_pattern.lower() in recipe["name"].lower()
-        ]
-        logger.debug(f"Found {len(exact_matches)} exact matches")
-
-        if exact_matches:
-            match = exact_matches[0]
-            logger.info(f"Using exact match: {match['name']}")
-            result = serialize_response({
-                "success": True,
-                "recipe_id": match["id"],
-                "recipe_name": match["name"],
-                "match_type": "exact",
-                "current_jdk": current_jdk,
-                "target_jdk": latest_java,
-                "project_name": project_name
-            })
-            logger.info("=== Completed migrationPlan ===")
-            return result
-
-        logger.info("No exact match found, scoring all recipes")
-        scored_recipes = []
-        for recipe in recipes:
-            logger.debug(f"Scoring recipe: {recipe['name']}")
-            score = score_recipe_match(recipe, latest_java, llm)
-            scored_recipes.append((recipe, score))
-
-        scored_recipes.sort(key=lambda x: x[1], reverse=True)
-        logger.debug("Recipes sorted by score")
+        result = {
+            "success": True,
+            "projects": updated_projects,
+            "total_projects": len(projects_data),
+            "processed_projects": len(updated_projects)
+        }
         
-        if scored_recipes and scored_recipes[0][1] > 70:
-            best_match = scored_recipes[0][0]
-            score = scored_recipes[0][1]
-            logger.info(f"Selected best match: {best_match['name']} (score: {score})")
-            result = serialize_response({
-                "success": True,
-                "recipe_id": best_match["id"],
-                "recipe_name": best_match["name"],
-                "match_type": "scored",
-                "match_score": score,
-                "current_jdk": current_jdk,
-                "target_jdk": latest_java,
-                "project_name": project_name
-            })
-            logger.info("=== Completed migrationPlan ===")
-            return result
-
-        logger.warning("No suitable migration recipe found")
-        result = {"success": False, "error": "No suitable migration recipe found"}
+        serialized = serialize_response(result)
+        logger.debug(f"Migration plan results after serialization: {serialized}")
+        
         logger.info("=== Completed migrationPlan ===")
-        return result
+        return serialized
         
     except Exception as e:
         logger.error("Error in migrationPlan", exc_info=True)
