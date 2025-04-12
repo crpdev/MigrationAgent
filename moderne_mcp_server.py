@@ -4,6 +4,7 @@ import logging
 import logging.handlers
 import os
 import sys
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -83,6 +84,144 @@ def run_moderne_command(command: list) -> dict:
             "error": str(e)
         }
 
+def get_all_projects() -> List[str]:
+    """Get list of all projects in PROJECTS_BASE_PATH."""
+    if not PROJECTS_BASE_PATH:
+        logger.error("PROJECTS_BASE_PATH environment variable not set")
+        raise ValueError("PROJECTS_BASE_PATH environment variable not set")
+        
+    try:
+        projects = [d for d in os.listdir(PROJECTS_BASE_PATH) 
+                   if os.path.isdir(os.path.join(PROJECTS_BASE_PATH, d))]
+        logger.info(f"Found {len(projects)} projects in {PROJECTS_BASE_PATH}")
+        logger.debug(f"Projects found: {projects}")
+        return projects
+    except Exception as e:
+        logger.error(f"Error reading projects directory: {e}", exc_info=True)
+        raise
+
+def verify_project_exists(project_name: str) -> bool:
+    """Verify that a project exists in PROJECTS_BASE_PATH."""
+    try:
+        project_path = get_full_project_path(project_name)
+        exists = os.path.exists(project_path)
+        if exists:
+            logger.debug(f"Project {project_name} found at {project_path}")
+        else:
+            logger.warning(f"Project {project_name} not found at {project_path}")
+        return exists
+    except Exception as e:
+        logger.error(f"Error verifying project {project_name}", exc_info=True)
+        return False
+
+@mcp.tool(name="modBuildAll", description="Build all projects using Moderne CLI")
+def mod_build_all() -> dict:
+    """Build all projects in PROJECTS_BASE_PATH using Moderne CLI."""
+    logger.info("Starting modBuildAll")
+    
+    try:
+        projects = get_all_projects()
+        if not projects:
+            logger.warning("No projects found to build")
+            return {"success": False, "error": "No projects found"}
+            
+        results = []
+        success_count = 0
+        
+        for project in projects:
+            logger.info(f"Building project: {project}")
+            result = mod_build(project)
+            results.append({
+                "project": project,
+                "success": result["success"],
+                "error": result.get("error", None)
+            })
+            if result["success"]:
+                success_count += 1
+                
+        return {
+            "success": success_count > 0,
+            "total_projects": len(projects),
+            "successful_builds": success_count,
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error("Error in modBuildAll", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+@mcp.tool(name="modUpgradeAll", description="Upgrade all projects using specified recipe")
+def mod_upgrade_all(recipe: str) -> dict:
+    """Upgrade all projects using specified recipe."""
+    logger.info(f"Starting modUpgradeAll with recipe: {recipe}")
+    
+    try:
+        projects = get_all_projects()
+        if not projects:
+            logger.warning("No projects found to upgrade")
+            return {"success": False, "error": "No projects found"}
+            
+        results = []
+        success_count = 0
+        
+        for project in projects:
+            logger.info(f"Upgrading project: {project}")
+            result = mod_upgrade(project, recipe)
+            results.append({
+                "project": project,
+                "success": result["success"],
+                "error": result.get("error", None)
+            })
+            if result["success"]:
+                success_count += 1
+                
+        return {
+            "success": success_count > 0,
+            "total_projects": len(projects),
+            "successful_upgrades": success_count,
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error("Error in modUpgradeAll", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+@mcp.tool(name="modApplyUpgradeAll", description="Apply the last recipe run to all projects")
+def mod_apply_upgrade_all() -> dict:
+    """Apply the last recipe run to all projects using Moderne CLI."""
+    logger.info("Starting modApplyUpgradeAll")
+    
+    try:
+        projects = get_all_projects()
+        if not projects:
+            logger.warning("No projects found to apply upgrades")
+            return {"success": False, "error": "No projects found"}
+            
+        results = []
+        success_count = 0
+        
+        for project in projects:
+            logger.info(f"Applying upgrade to project: {project}")
+            result = mod_apply_upgrade(project)
+            results.append({
+                "project": project,
+                "success": result["success"],
+                "error": result.get("error", None)
+            })
+            if result["success"]:
+                success_count += 1
+                
+        return {
+            "success": success_count > 0,
+            "total_projects": len(projects),
+            "successful_applies": success_count,
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error("Error in modApplyUpgradeAll", exc_info=True)
+        return {"success": False, "error": str(e)}
+
 @mcp.tool(name="modBuild", description="Build a project using Moderne CLI")
 def mod_build(project_name: str) -> dict:
     """Build a project using Moderne CLI."""
@@ -90,12 +229,11 @@ def mod_build(project_name: str) -> dict:
     
     try:
         verify_jar_exists()
-        project_path = get_full_project_path(project_name)
         
-        if not os.path.exists(project_path):
-            logger.error(f"Project path does not exist: {project_path}")
-            return {"success": False, "error": f"Project path does not exist: {project_path}"}
+        if not verify_project_exists(project_name):
+            return {"success": False, "error": f"Project not found: {project_name}"}
             
+        project_path = get_full_project_path(project_name)
         command = ["java", "-jar", MODERNE_CLI_JAR, "build", project_path]
         return run_moderne_command(command)
         
@@ -111,18 +249,14 @@ def mod_upgrade(project_name: str, recipe: str) -> dict:
         logger.info(f"Using recipe: {recipe}")
         
         verify_jar_exists()
-        project_path = get_full_project_path(project_name)
         
-        if not os.path.exists(project_path):
-            logger.error(f"Project path does not exist: {project_path}")
-            return {"success": False, "error": f"Project path does not exist: {project_path}"}
+        if not verify_project_exists(project_name):
+            return {"success": False, "error": f"Project not found: {project_name}"}
             
+        project_path = get_full_project_path(project_name)
         command = ["java", "-jar", MODERNE_CLI_JAR, "run", project_path, "--recipe", recipe]
         return run_moderne_command(command)
         
-    except ValueError as e:
-        logger.error("Invalid message format or environment configuration", exc_info=True)
-        return {"success": False, "error": str(e)}
     except Exception as e:
         logger.error("Error in modUpgrade", exc_info=True)
         return {"success": False, "error": str(e)}
@@ -134,12 +268,11 @@ def mod_apply_upgrade(project_name: str) -> dict:
     
     try:
         verify_jar_exists()
-        project_path = get_full_project_path(project_name)
         
-        if not os.path.exists(project_path):
-            logger.error(f"Project path does not exist: {project_path}")
-            return {"success": False, "error": f"Project path does not exist: {project_path}"}
+        if not verify_project_exists(project_name):
+            return {"success": False, "error": f"Project not found: {project_name}"}
             
+        project_path = get_full_project_path(project_name)
         command = ["java", "-jar", MODERNE_CLI_JAR, "git", "apply", project_path, "--last-recipe-run"]
         return run_moderne_command(command)
         
