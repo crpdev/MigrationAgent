@@ -6,6 +6,7 @@ from fastmcp import FastMCP, Tool, Message
 import subprocess
 import logging
 import re
+from dotenv import load_dotenv
 
 # Initialize logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -16,11 +17,17 @@ from google.generativeai import configure, GenerativeModel
 import google.generativeai as genai
 
 # Configure the Gemini API - Replace with your actual API key
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "your-api-key-here")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# os.environ.get("GEMINI_API_KEY", "your-api-key-here")
 configure(api_key=GEMINI_API_KEY)
 model = GenerativeModel("gemini-2.0-flash")
 
 class MavenProjectAnalyzer:
+
+    def __init__(self):
+        # Load environment variables from .env file
+        load_dotenv()
+
     def __init__(self, project_path):
         self.project_path = project_path
         self.java_version = None
@@ -172,6 +179,14 @@ class MigrationAgent:
                 name="run_moderne_cli",
                 description="Runs the moderne-cli tool to find migration recipes",
                 function=self.run_moderne_cli
+            )
+        )
+
+        self.mcp.register_tool(
+            Tool(
+                name="run_moderne_cli_test",
+                description="Runs the moderne-cli tool via batch file to find migration recipes",
+                function=self.test_run_moderne_cli
             )
         )
         logger.debug("Initialized MigrationAgent with registered tools")
@@ -330,6 +345,7 @@ class MigrationAgent:
             
             self.project_analysis = analysis
             logger.debug("Migration plan generation completed")
+            self.test_run_moderne_cli()
             return json.dumps(analysis, indent=2)
             
         except Exception as e:
@@ -388,6 +404,32 @@ class MigrationAgent:
                         logger.error(f"Error generating response: {str(e)}")
                 else:
                     print("Please provide a valid path to a Maven project directory.")
+
+    def test_run_moderne_cli(self):
+        """Test method to execute a Java JAR file with arguments from the environment."""
+        import subprocess
+
+        # Path to the Java JAR file
+        jar_file_path = "C:\\Users\\rajap\\tools\\moderne-cli-3.36.1.jar"
+
+        # Get sample arguments from environment variables
+        sample_arguments = os.getenv("SAMPLE_ARGUMENTS")
+
+        if not sample_arguments:
+            print("No arguments provided in the environment variable SAMPLE_ARGUMENTS.")
+            return
+
+        print("About to execute the Java JAR file...")
+
+        # Execute the Java JAR file with the sample arguments
+        try:
+            result = subprocess.run(["java", "-jar", jar_file_path] + sample_arguments, check=True, capture_output=True, text=True)
+            print("Java JAR execution output:", result.stdout)
+            print("Java JAR execution errors:", result.stderr)
+        except subprocess.CalledProcessError as e:
+            print("An error occurred while executing the Java JAR file:", e)
+
+        print("Java JAR execution completed.")
 
 if __name__ == "__main__":
     agent = MigrationAgent()
