@@ -25,6 +25,21 @@ class ProjectAnalysis(BaseModel):
     total_projects: int
     analyzed_projects: int
 
+class MigrationPlanArgs(BaseModel):
+    content: str
+    
+    @classmethod
+    def from_args(cls, args: Union[str, List[str], Dict[str, Any]]) -> 'MigrationPlanArgs':
+        """Create MigrationPlanArgs from various input formats."""
+        if isinstance(args, str):
+            return cls(content=args)
+        elif isinstance(args, list) and len(args) > 0:
+            return cls(content=args[0])
+        elif isinstance(args, dict) and "content" in args:
+            return cls(content=args["content"])
+        else:
+            raise ValueError("Invalid argument format")
+
 # Load environment variables
 load_dotenv()
 
@@ -361,24 +376,24 @@ def get_latest_spring_boot_version(llm: GenerativeModel) -> str:
         logger.info("Falling back to default version: 3.2.1")
         return "3.2.1"
 
-def score_recipe_match(recipe: Dict, target_version: str, is_spring_boot: bool, llm: GenerativeModel) -> float:
+def score_recipe_match(recipe: Dict, target_version: str, llm: GenerativeModel) -> float:
     """Use LLM to score how well a recipe matches the migration goal."""
-    logger.debug(f"Scoring recipe match for {'Spring Boot' if is_spring_boot else 'Java'} version: {target_version}")
+    logger.debug(f"Scoring recipe match for Spring Boot {target_version}")
     logger.debug(f"Recipe being scored: {recipe['name']}")
     
     try:
         prompt = f"""As a Java and Spring Boot migration expert, score how well this recipe matches the migration goal.
         
-        Migration Goal: {'Migrate to Spring Boot' if is_spring_boot else 'Migrate to Java'} {target_version}
+        Migration Goal: {'Migrate to Spring Boot'} {target_version}
         
         Recipe:
         {json.dumps(recipe, indent=2)}
         
         Respond with EXACTLY a number between 0 and 100, where:
-        - 100 means perfect match (exact match for {'Spring Boot' if is_spring_boot else 'Java'} {target_version} migration)
-        - 75+ means very relevant (mentions {'Spring Boot' if is_spring_boot else 'Java'} upgrade to similar version)
-        - 50+ means somewhat relevant (mentions {'Spring Boot' if is_spring_boot else 'Java'} but different version)
-        - 25+ means slightly relevant (mentions upgrades but not specific to {'Spring Boot' if is_spring_boot else 'Java'})
+        - 100 means perfect match (exact match for Spring Boot {target_version} migration)
+        - 75+ means very relevant (mentions Spring Boot upgrade to similar version)
+        - 50+ means somewhat relevant (mentions Spring Boot but different version)
+        - 25+ means slightly relevant (mentions upgrades but not specific to Spring Boot)
         - 0 means not relevant at all"""
 
         logger.debug(f"Sending scoring prompt to LLM")
@@ -390,12 +405,13 @@ def score_recipe_match(recipe: Dict, target_version: str, is_spring_boot: bool, 
         logger.error(f"Error scoring recipe '{recipe['name']}'", exc_info=True)
         return 0
 
-def find_best_recipe(recipes: List[Dict], target_version: str, is_spring_boot: bool, llm: GenerativeModel) -> Optional[Dict]:
+def find_best_recipe(recipes: List[Dict], target_version: str, llm: GenerativeModel) -> Optional[Dict]:
     """Find the best matching recipe for the target version."""
-    logger.info(f"Finding best recipe for {'Spring Boot' if is_spring_boot else 'Java'} version {target_version}")
+    logger.info(f"Finding best recipe for Spring Boot {target_version}")
     
-    search_pattern = f"migrate to {'spring boot' if is_spring_boot else 'java'} {target_version}"
-    logger.debug(f"Searching for pattern: {search_pattern}")
+    # First try exact match
+    search_pattern = f"migrate to spring boot {target_version}"
+    logger.debug(f"Searching for exact pattern: {search_pattern}")
     
     exact_matches = [
         recipe for recipe in recipes
@@ -413,73 +429,67 @@ def find_best_recipe(recipes: List[Dict], target_version: str, is_spring_boot: b
             "match_type": "exact"
         }
 
-    logger.info("No exact match found, scoring all recipes")
-    scored_recipes = []
+    # If no exact match, try substring match for version (e.g., 3.3 for 3.3.0)
+    logger.info("No exact match found, trying version substring matches")
+    version_parts = target_version.split('.')
+    version_patterns = []
+    
+    # Generate version patterns (e.g., for 3.3.0 -> ["3.3.0", "3.3"])
+    for i in range(len(version_parts), 0, -1):
+        version_pattern = '.'.join(version_parts[:i])
+        version_patterns.append(version_pattern)
+    
+    logger.debug(f"Generated version patterns: {version_patterns}")
+    
+    # Filter recipes that contain "migrate to spring boot" and any version pattern
+    filtered_recipes = []
     for recipe in recipes:
-        logger.debug(f"Scoring recipe: {recipe['name']}")
-        score = score_recipe_match(recipe, target_version, is_spring_boot, llm)
-        scored_recipes.append((recipe, score))
+        recipe_name_lower = recipe["name"].lower()
+        if "migrate to spring boot" in recipe_name_lower:
+            for pattern in version_patterns:
+                if pattern in recipe_name_lower:
+                    filtered_recipes.append(recipe)
+                    break
 
-    scored_recipes.sort(key=lambda x: x[1], reverse=True)
-    logger.debug("Recipes sorted by score")
+    logger.info(f"Found {len(filtered_recipes)} recipes matching version patterns")
+
+    # If we have filtered recipes, score them
+    if filtered_recipes:
+        logger.info("Scoring filtered recipes")
+        scored_recipes = []
+        for recipe in filtered_recipes:
+            logger.debug(f"Scoring recipe: {recipe['name']}")
+            score = score_recipe_match(recipe, target_version, llm)
+            scored_recipes.append((recipe, score))
+
+        scored_recipes.sort(key=lambda x: x[1], reverse=True)
+        logger.debug("Recipes sorted by score")
+        
+        if scored_recipes and scored_recipes[0][1] > 70:
+            best_match = scored_recipes[0][0]
+            score = scored_recipes[0][1]
+            logger.info(f"Selected best match: {best_match['name']} (score: {score})")
+            return {
+                "recipe_id": best_match["id"],
+                "recipe_name": best_match["name"],
+                "recipe_description": best_match.get("description", ""),
+                "match_type": "scored",
+                "match_score": score
+            }
     
-    if scored_recipes and scored_recipes[0][1] > 70:
-        best_match = scored_recipes[0][0]
-        score = scored_recipes[0][1]
-        logger.info(f"Selected best match: {best_match['name']} (score: {score})")
-        return {
-            "recipe_id": best_match["id"],
-            "recipe_name": best_match["name"],
-            "recipe_description": best_match.get("description", ""),
-            "match_type": "scored",
-            "match_score": score
-        }
-    
+    logger.info("No suitable matches found")
     return None
 
-@mcp.tool(name="migrationPlan", description="Generate migration plan based on project analysis")
-def migration_plan(input_data: ProjectAnalysis) -> dict:
+@mcp.tool(name="migrationPlan", description="Generate migration plan based on Spring Boot version")
+def migration_plan() -> dict:
     """
-    Generate migration plan for a list of projects.
+    Generate migration plan based on Spring Boot version.
     
     Args:
-        args: Dictionary containing analysis results with project versions
+        args: Spring Boot version as string, list, or dictionary with content field
     """
     try:
         logger.info("=== Starting migrationPlan ===")
-        logger.debug(f"Received args: {input_data}")
-        
-        # # Parse input projects
-        # if not args or not isinstance(args, dict):
-        #     logger.error("Invalid arguments format")
-        #     return {"success": False, "error": "Invalid arguments format"}
-            
-        # input_data = args.get("content", "{}")
-        if isinstance(input_data, str):
-            input_data = json.loads(input_data)
-        
-        logger.debug(f"Parsed input data: {input_data}")
-        
-        if not input_data.get("success") or not input_data.get("projects"):
-            logger.error("Invalid input data format or no projects found")
-            return {"success": False, "error": "Invalid input data format or no projects found"}
-            
-        # Convert string project data to dictionaries
-        try:
-            projects_data = []
-            for project_str in input_data["projects"]:
-                # Replace single quotes with double quotes for valid JSON
-                if isinstance(project_str, str):
-                    project_str = project_str.replace("'", '"')
-                    project_dict = json.loads(project_str)
-                else:
-                    project_dict = project_str
-                projects_data.append(project_dict)
-            
-            logger.debug(f"Parsed projects data: {projects_data}")
-        except Exception as e:
-            logger.error(f"Error parsing project data: {e}", exc_info=True)
-            return {"success": False, "error": f"Error parsing project data: {str(e)}"}
             
         # Initialize Gemini
         load_dotenv()
@@ -489,13 +499,12 @@ def migration_plan(input_data: ProjectAnalysis) -> dict:
             return {"success": False, "error": "GEMINI_API_KEY not found"}
             
         genai.configure(api_key=GEMINI_API_KEY)
-        llm = GenerativeModel("gemini-pro")
+        llm = GenerativeModel("gemini-2.0-flash")
         logger.debug("Gemini LLM initialized successfully")
 
-        # Get latest versions
-        latest_java = get_latest_java_version(llm)
+        # Get latest Spring Boot version
         latest_spring = get_latest_spring_boot_version(llm)
-        logger.info(f"Latest versions - Java: {latest_java}, Spring Boot: {latest_spring}")
+        logger.info(f"Latest stable version of Spring Boot: {latest_spring}")
         
         # Load Moderne recipes
         try:
@@ -505,58 +514,26 @@ def migration_plan(input_data: ProjectAnalysis) -> dict:
         except Exception as e:
             logger.error("Failed to load recipes file", exc_info=True)
             return {"success": False, "error": f"Could not load recipes: {str(e)}"}
-
-        # Process each project
-        updated_projects = []
-        for project in projects_data:
-            if not project.get("success", False):
-                logger.warning(f"Skipping failed project: {project}")
-                continue
-                
-            logger.info(f"Processing project: {project.get('project_name')}")
             
-            project_update = project.copy()
-            project_update["latest_jdk_version"] = latest_java
-            project_update["latest_spring_boot_version"] = latest_spring
+        # Determine if updates are needed
             
-            current_jdk = project.get("jdk_version")
-            current_spring = project.get("spring_boot_version")
-            
-            # Determine if updates are needed
-            needs_java_update = current_jdk and current_jdk != latest_java
-            needs_spring_update = current_spring and current_spring != latest_spring
-            
-            if needs_spring_update or needs_java_update:
-                # Prefer Spring Boot migration if both updates are needed
-                if needs_spring_update:
-                    logger.info(f"Finding Spring Boot migration recipe for version {latest_spring}")
-                    recipe_match = find_best_recipe(recipes, latest_spring, True, llm)
-                    if recipe_match:
-                        project_update["migration_recipe"] = recipe_match
-                        updated_projects.append(project_update)
-                        continue
-                
-                # Fall back to Java migration if Spring Boot recipe not found or only Java needs update
-                if needs_java_update:
-                    logger.info(f"Finding Java migration recipe for version {latest_java}")
-                    recipe_match = find_best_recipe(recipes, latest_java, False, llm)
-                    if recipe_match:
-                        project_update["migration_recipe"] = recipe_match
-                
-            updated_projects.append(project_update)
+        logger.info(f"Finding Spring Boot migration recipe for version {latest_spring}")
+        recipe_match = find_best_recipe(recipes, latest_spring, llm)
+        if recipe_match:
+            result = {
+                "success": True,
+                "target_version": latest_spring,
+                "recipe": recipe_match
+            }
+        else:
+            result = {
+                "success": False,
+                "error": f"No suitable migration recipe found for Spring Boot {latest_spring}"
+            }
         
-        result = {
-            "success": True,
-            "projects": updated_projects,
-            "total_projects": len(projects_data),
-            "processed_projects": len(updated_projects)
-        }
-        
-        serialized = serialize_response(result)
-        logger.debug(f"Migration plan results after serialization: {serialized}")
-        
+        logger.debug(f"Migration plan results: {result}")
         logger.info("=== Completed migrationPlan ===")
-        return serialized
+        return result
         
     except Exception as e:
         logger.error("Error in migrationPlan", exc_info=True)

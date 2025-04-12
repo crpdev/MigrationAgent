@@ -166,8 +166,8 @@ Respond with EXACTLY ONE of these formats:
    Example: for analyzeProject(), use:
    FUNCTION_CALL: analyzeProject
 
-   Example: for migrationPlan(input_data: ProjectAnalysis), use:
-   FUNCTION_CALL: migrationPlan|project_analysis_json
+   Example: for migrationPlan(), use:
+   FUNCTION_CALL: migrationPlan
 
    Example: For mod_build(project_name:str), use:
    FUNCTION_CALL: mod_build|
@@ -186,7 +186,7 @@ Make sure to provide parameters in the correct order as specified in the functio
 
                 # Initial query for math operation
                 projects_base_path = os.getenv("PROJECTS_BASE_PATH")
-                query = f"Perform an analysis of the projects. Then prepare a migration plan for the projects from the json result"
+                query = f"Perform an analysis of the projects. Then send spring_boot_version to decide the migration plan"
 
                 logger.info(f"Starting with query: {query}")
                 
@@ -232,8 +232,7 @@ Make sure to provide parameters in the correct order as specified in the functio
                                 if length == 0:
                                     result = await maven_session.call_tool(func_name)
                                 else:
-                                    logger.info(f"params[0]: {params[0]}")
-                                    result = await maven_session.call_tool(func_name, params[0])
+                                    result = await maven_session.call_tool(func_name, params)
                             else:
                                 logger.error(f"Unknown function: {func_name}")
                                 continue
