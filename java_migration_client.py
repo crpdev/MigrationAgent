@@ -15,7 +15,7 @@ log_dir = "logs"
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
-log_file = os.path.join(log_dir, f"paint_client_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+log_file = os.path.join(log_dir, f"java_migration_client_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -60,7 +60,7 @@ async def generate_with_timeout(prompt, timeout=10):
 async def main():
     logger.info("Starting main execution...")
     try:
-        # Create server connections for Math, Paint, and Gmail
+        # Create server connections for Maven and Moderne
         logger.info("Establishing connections to MCP servers...")
         moderne_mcp_server_params = StdioServerParameters(
             command="python",
@@ -172,11 +172,11 @@ Respond with EXACTLY ONE of these formats:
    Example: For mod_build_all(), use:
    FUNCTION_CALL: mod_build_all
 
-   Example: For mod_upgrade(recipe:str), use:
-   FUNCTION_CALL: mod_upgrade|recipe
+   Example: For mod_upgrade_all(), use:
+   FUNCTION_CALL: mod_upgrade_all
    
-   Example: For mod_apply_upgrade(), use:
-   FUNCTION_CALL: mod_apply_upgrade|
+   Example: For mod_apply_upgrade_all(), use:
+   FUNCTION_CALL: mod_apply_upgrade_all
 
 2. For final answers:
    FINAL_ANSWER: [your response]
@@ -186,13 +186,13 @@ Make sure to provide parameters in the correct order as specified in the functio
 
                 # Initial query for math operation
                 projects_base_path = os.getenv("PROJECTS_BASE_PATH")
-                query = f"Perform an analysis of the projects. Then send spring_boot_version to decide the migration plan. Then perform mod_build_all"
+                query = f"Perform an analysis of the projects. Then send spring_boot_version to decide the migration plan. Then perform mod_build_all. Then perform mod_upgrade_all. Then perform mod_apply_upgrade_all."
 
                 logger.info(f"Starting with query: {query}")
                 
                 # Use global iteration variables
                 iteration = 0
-                max_iterations = 3
+                max_iterations = 4
                 last_response = None
                 iteration_response = []
                 
@@ -230,7 +230,7 @@ Make sure to provide parameters in the correct order as specified in the functio
                                 if length == 0:
                                     result = await moderne_session.call_tool(func_name)
                                 else:
-                                    result = await moderne_session.call_tool(func_name, params)
+                                    result = await moderne_session.call_tool(func_name, arguments={"arg1": "value"})
                             elif func_name in [tool.name for tool in maven_tools]:
                                 if length == 0:
                                     result = await maven_session.call_tool(func_name)

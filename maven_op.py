@@ -363,7 +363,7 @@ def get_latest_spring_boot_version(llm: GenerativeModel) -> str:
     """Use Gemini LLM to identify the latest stable Spring Boot version."""
     logger.debug("Requesting latest Spring Boot version from LLM")
     try:
-        prompt = """What is the latest stable version of Spring Boot available for production use?
+        prompt = """What is the latest stable version of Spring Boot available for production use? Check the latest version from https://start.spring.io/
         Respond with ONLY the version number (e.g., '3.2.1'), nothing else."""
         
         logger.debug(f"Sending prompt to LLM: {prompt}")
