@@ -279,26 +279,26 @@ def analyze_project_impl(project_name: str) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 @mcp.tool(name="analyzeProject", description="Analyze a Maven project to identify JDK version")
-def analyze_project() -> dict:
+def analyze_project(project_path: str) -> dict:
     """
     Analyze a Maven project to identify JDK version.
     Reads the project name from PROJECTS_BASE_PATH directory.
     """
     try:
-        logger.info("=== Starting analyzeProject ===")
+        logger.info(f"=== Starting analyzeProject at {project_path}===")
         
-        if not PROJECTS_BASE_PATH:
-            logger.error("PROJECTS_BASE_PATH environment variable not set")
-            return {"success": False, "error": "PROJECTS_BASE_PATH environment variable not set"}
+        # if not PROJECTS_BASE_PATH:
+        #     logger.error("PROJECTS_BASE_PATH environment variable not set")
+        #     return {"success": False, "error": "PROJECTS_BASE_PATH environment variable not set"}
             
-        if not os.path.exists(PROJECTS_BASE_PATH):
-            logger.error(f"Projects base path does not exist: {PROJECTS_BASE_PATH}")
-            return {"success": False, "error": f"Projects base path does not exist: {PROJECTS_BASE_PATH}"}
+        # if not os.path.exists(PROJECTS_BASE_PATH):
+        #     logger.error(f"Projects base path does not exist: {PROJECTS_BASE_PATH}")
+        #     return {"success": False, "error": f"Projects base path does not exist: {PROJECTS_BASE_PATH}"}
             
         # Get list of directories in PROJECTS_BASE_PATH
         try:
-            projects = [d for d in os.listdir(PROJECTS_BASE_PATH) 
-                       if os.path.isdir(os.path.join(PROJECTS_BASE_PATH, d))]
+            projects = [d for d in os.listdir(project_path) 
+                       if os.path.isdir(os.path.join(project_path, d))]
         except Exception as e:
             logger.error(f"Error reading projects directory: {e}", exc_info=True)
             return {"success": False, "error": f"Error reading projects directory: {str(e)}"}

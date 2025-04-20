@@ -28,17 +28,31 @@ class DecisionMaking:
         self.tools_description = None
         self.moderne_tools = []
         self.maven_tools = []
+        self.workflow_steps = {
+            'analyzeProject': 1,
+            'migrationPlan': 2,
+            'modUpgradeAll': 3
+        }
+        self.current_step = 1
         # Map common function names to actual tool names
         self.function_map = {
             'analyzeproject': 'analyzeProject',
             'migrationplan': 'migrationPlan',
-            'modbuildall': 'modBuildAll',
-            'modupgradeall': 'modUpgradeAll',
-            'modapplyupgradeall': 'modApplyUpgradeAll',
-            'modbuild': 'modBuild',
-            'modupgrade': 'modUpgrade',
-            'modapplyupgrade': 'modApplyUpgrade'
+            'modupgradeall': 'modUpgradeAll'
         }
+
+    def update_workflow_state(self, function_name: str):
+        """Update the current workflow step"""
+        if function_name in self.workflow_steps:
+            self.current_step = self.workflow_steps[function_name]
+
+    def get_next_step(self) -> str:
+        """Get the expected next step in the workflow"""
+        next_step = self.current_step + 1
+        for func, step in self.workflow_steps.items():
+            if step == next_step:
+                return func
+        return None
 
     def get_actual_function_name(self, function_name: str) -> str:
         """Map function name to actual tool name"""
@@ -113,40 +127,60 @@ class DecisionMaking:
             "release_type": state.preferences.release_type.value
         }
         
-        system_prompt = f"""You are a Java migration assistant that helps with project analysis and migration.
+        # Get the next expected step
+        next_step = self.get_next_step()
+        workflow_hint = f"Expected next step: {next_step}" if next_step else ""
+        
+        system_prompt = f"""You are a Java migration assistant.
 
 Current User Preferences:
 - Project Path: {user_prefs['project_path']}
 - Migration Type: {user_prefs['migration_type']}
 - Release Type: {user_prefs['release_type']}
 
+Migration Workflow Steps (in order):
+1. analyzeProject - Analyze project structure and versions
+2. migrationPlan - Generate migration plan based on analysis
+3. modUpgradeAll - Apply upgrade recipe
+
+Current Progress: Step {self.current_step} of 5
+{workflow_hint}
+
 Available tools:
 {self.tools_description}
 
-You must respond with EXACTLY ONE line in one of these formats:
-1. For function calls:
+CRITICAL INSTRUCTION: You MUST respond with EXACTLY ONE LINE, with NO additional text, explanations, or newlines.
+Choose ONE of these formats:
+
+1. For function calls (using key=value format):
    FUNCTION_CALL: function_name|param1=value1|param2=value2|...
-   
+
 2. For final answers:
    FINAL_ANSWER: [your response]
 
-IMPORTANT:
-- Think before responding
-- Verify each step
-- Follow the exact format
-- No additional text or explanations
-- One response per iteration
-- Validate all inputs before use
-- Parameters must match the required input types for the function
-- Use EXACT function names as shown in the tools list
-
-Example responses:
-FUNCTION_CALL: analyzeProject
+Examples of VALID responses (each is ONE line with NO additional text):
+FUNCTION_CALL: analyzeProject|project_path={user_prefs['project_path']}
 FUNCTION_CALL: migrationPlan
-FUNCTION_CALL: modBuildAll
-FUNCTION_CALL: modUpgradeAll|recipe_id=UpgradeSpringBoot_3_2
-FUNCTION_CALL: modApplyUpgradeAll
-FINAL_ANSWER: [Migration completed successfully]"""
+FUNCTION_CALL: modUpgradeAll|project_path={user_prefs['project_path']}|recipe_id=UpgradeSpringBoot_3_2
+FINAL_ANSWER: [Migration completed successfully]
+
+Examples of INVALID responses:
+[X] Here's what we should do next...
+    FUNCTION_CALL: analyzeProject
+[X] Based on the previous step...
+    FUNCTION_CALL: migrationPlan
+[X] FUNCTION_CALL: modUpgradeAll
+    Some additional explanation
+[X] Multiple responses in one reply
+
+IMPORTANT:
+- ONLY ONE LINE OF OUTPUT
+- NO explanations or additional text
+- NO newlines in response
+- Use EXACT function names from tools list
+- Parameters must match required types
+- Use project_path from user preferences when needed
+- Follow the migration workflow steps in order"""
         
         return system_prompt
 
@@ -158,13 +192,20 @@ FINAL_ANSWER: [Migration completed successfully]"""
                 loop.run_in_executor(None, lambda: self.model.generate_content(prompt)),
                 timeout=timeout
             )
-            return response.text.strip()
+            # Clean up response - take only the last line if multiple lines
+            response_text = response.text.strip().split('\n')[-1]
+            logger.info(f"Raw LLM Response: {response.text}")
+            logger.info(f"Cleaned LLM Response: {response_text}")
+            return response_text
         except Exception as e:
             logger.error(f"Error in LLM generation: {e}")
             raise
 
     def process_llm_response(self, response: str) -> Tuple[str, Dict[str, str]]:
         """Process LLM responses into structured format"""
+        # Remove any leading/trailing whitespace and get the last line if multiple lines
+        response = response.strip().split('\n')[-1]
+        
         if response.startswith("FUNCTION_CALL:"):
             parts = response[14:].split("|")
             function_name = parts[0].strip()
@@ -183,7 +224,7 @@ FINAL_ANSWER: [Migration completed successfully]"""
         elif response.startswith("FINAL_ANSWER:"):
             return ("answer", {"message": response[13:].strip()})
         else:
-            raise ValueError(f"Invalid response format: {response}")
+            raise ValueError(f"Invalid response format. Response must start with 'FUNCTION_CALL:' or 'FINAL_ANSWER:'. Got: {response}")
 
     async def make_decision(self, state: MemoryState, query: str) -> Decision:
         """Generate decision using LLM based on state and query"""
@@ -202,12 +243,20 @@ FINAL_ANSWER: [Migration completed successfully]"""
             # Process response
             response_type, data = self.process_llm_response(llm_response)
             
+            # Update workflow state if it's a function call
+            if response_type == "function":
+                self.update_workflow_state(data["name"])
+            
             # Create context
             context = {
                 "preferences": {
                     "project_path": str(state.preferences.project_path),
                     "migration_type": state.preferences.migration_type.value,
                     "release_type": state.preferences.release_type.value
+                },
+                "workflow": {
+                    "current_step": self.current_step,
+                    "total_steps": 5
                 },
                 "memory": state.context
             }

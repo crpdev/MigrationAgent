@@ -199,22 +199,16 @@ async def cognitive_cycle(initial_state: MemoryState = None) -> None:
                 state = Memory.create_initial_state(preferences) if not initial_state else initial_state
                 
                 # Initial query based on preferences
-                initial_query = f"""Analyze the Java project at {preferences.project_path} for migration.
-Follow these steps:
-1. Analyze the project structure
-2. Determine Spring Boot version
-3. Create a migration plan
-4. Build all modules
-5. Apply necessary upgrades
-6. Verify the migration"""
+                initial_query = f"""Analyze the Java project at {preferences.project_path}. Then create a migration plan to get the recipe_id. Then upgrade by passing the recipe_id. Then apply the last recipe run to all projects by performing mod_apply_upgrade_all"""
                 
                 # Main cognitive cycle
                 iteration = 0
-                max_iterations = 4
+                max_iterations = 3
                 current_query = initial_query
                 
                 while iteration < max_iterations:
                     logger.info(f"\n--- Iteration {iteration + 1} ---")
+                    logger.info(f"Query: {current_query}")
                     
                     # Decision Making with LLM
                     decision = await decision_layer.make_decision(state, current_query)

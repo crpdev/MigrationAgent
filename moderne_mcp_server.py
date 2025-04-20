@@ -84,16 +84,16 @@ def run_moderne_command(command: list) -> dict:
             "error": str(e)
         }
 
-def get_all_projects() -> List[str]:
+def get_all_projects(project_path: str) -> List[str]:
     """Get list of all projects in PROJECTS_BASE_PATH."""
-    if not PROJECTS_BASE_PATH:
-        logger.error("PROJECTS_BASE_PATH environment variable not set")
-        raise ValueError("PROJECTS_BASE_PATH environment variable not set")
+    # if not PROJECTS_BASE_PATH:
+    #     logger.error("PROJECTS_BASE_PATH environment variable not set")
+    #     raise ValueError("PROJECTS_BASE_PATH environment variable not set")
         
     try:
-        projects = [d for d in os.listdir(PROJECTS_BASE_PATH) 
-                   if os.path.isdir(os.path.join(PROJECTS_BASE_PATH, d))]
-        logger.info(f"Found {len(projects)} projects in {PROJECTS_BASE_PATH}")
+        projects = [d for d in os.listdir(project_path) 
+                   if os.path.isdir(os.path.join(project_path, d))]
+        logger.info(f"Found {len(projects)} projects in {project_path}")
         logger.debug(f"Projects found: {projects}")
         return projects
     except Exception as e:
@@ -114,13 +114,13 @@ def verify_project_exists(project_name: str) -> bool:
         logger.error(f"Error verifying project {project_name}", exc_info=True)
         return False
 
-@mcp.tool(name="modBuildAll", description="Build all projects using Moderne CLI")
-def mod_build_all() -> dict:
+# @mcp.tool(name="modBuildAll", description="Build all projects using Moderne CLI")
+def mod_build_all(project_path: str) -> dict:
     """Build all projects in PROJECTS_BASE_PATH using Moderne CLI."""
     logger.info("Starting modBuildAll")
     
     try:
-        projects = get_all_projects()
+        projects = get_all_projects(project_path)
         if not projects:
             logger.warning("No projects found to build")
             return {"success": False, "error": "No projects found"}
@@ -151,12 +151,12 @@ def mod_build_all() -> dict:
         return {"success": False, "error": str(e)}
 
 @mcp.tool(name="modUpgradeAll", description="Upgrade all projects using specified recipe")
-def mod_upgrade_all(recipe_id: str) -> dict:
+def mod_upgrade_all(project_path: str, recipe_id: str) -> dict:
     """Upgrade all projects using specified recipe."""
     logger.info(f"Starting modUpgradeAll with recipe: {recipe_id}")
     
     try:
-        projects = get_all_projects()
+        projects = get_all_projects(project_path)
         if not projects:
             logger.warning("No projects found to upgrade")
             return {"success": False, "error": "No projects found"}
@@ -186,7 +186,7 @@ def mod_upgrade_all(recipe_id: str) -> dict:
         logger.error("Error in modUpgradeAll", exc_info=True)
         return {"success": False, "error": str(e)}
 
-@mcp.tool(name="modApplyUpgradeAll", description="Apply the last recipe run to all projects")
+# @mcp.tool(name="modApplyUpgradeAll", description="Apply the last recipe run to all projects")
 def mod_apply_upgrade_all() -> dict:
     """Apply the last recipe run to all projects using Moderne CLI."""
     logger.info("Starting modApplyUpgradeAll")
@@ -222,7 +222,7 @@ def mod_apply_upgrade_all() -> dict:
         logger.error("Error in modApplyUpgradeAll", exc_info=True)
         return {"success": False, "error": str(e)}
 
-@mcp.tool(name="modBuild", description="Build a project using Moderne CLI")
+# @mcp.tool(name="modBuild", description="Build a project using Moderne CLI")
 def mod_build(project_name: str) -> dict:
     """Build a project using Moderne CLI."""
     logger.info(f"Starting modBuild for project: {project_name}")
@@ -241,7 +241,7 @@ def mod_build(project_name: str) -> dict:
         logger.error("Error in modBuild", exc_info=True)
         return {"success": False, "error": str(e)}
 
-@mcp.tool(name="modUpgrade", description="Upgrade a project using specified recipe")
+# @mcp.tool(name="modUpgrade", description="Upgrade a project using specified recipe")
 def mod_upgrade(project_name: str, recipe: str) -> dict:
     """Upgrade a project using specified recipe."""
     try:
@@ -261,7 +261,7 @@ def mod_upgrade(project_name: str, recipe: str) -> dict:
         logger.error("Error in modUpgrade", exc_info=True)
         return {"success": False, "error": str(e)}
 
-@mcp.tool(name="modApplyUpgrade", description="Apply the last recipe run using Moderne CLI")
+# @mcp.tool(name="modApplyUpgrade", description="Apply the last recipe run using Moderne CLI")
 def mod_apply_upgrade(project_name: str) -> dict:
     """Apply the last recipe run using Moderne CLI."""
     logger.info(f"Starting modApplyUpgrade for project: {project_name}")

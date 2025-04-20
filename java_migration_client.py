@@ -193,14 +193,14 @@ Respond with EXACTLY ONE of these formats:
    FUNCTION_CALL: function_name|param1=value1|param2=value2|...
    The parameters must match the required input types for the function.
    
-   Example: for analyzeProject(), use:
-   FUNCTION_CALL: analyzeProject
+   Example: for analyzeProject(project_path: str), use:
+   FUNCTION_CALL: analyzeProject|project_path=path/to/project from user preferences
 
    Example: for migrationPlan(), use:
    FUNCTION_CALL: migrationPlan
 
-   Example: For mod_build_all(), use:
-   FUNCTION_CALL: mod_build_all
+   Example: For mod_build_all(project_path: str), use:
+   FUNCTION_CALL: mod_build_all|project_path=path/to/project from user preferences
 
    Example: For mod_upgrade_all(recipe_id: str), use:
    FUNCTION_CALL: mod_upgrade_all|recipe_id=UpgradeSpringBoot_3_2
@@ -216,7 +216,7 @@ Make sure to provide parameters in the correct order as specified in the functio
 
                 # Initial query for math operation
                 projects_base_path = os.getenv("PROJECTS_BASE_PATH")
-                query = f"Perform an analysis of the projects. Then send spring_boot_version to decide the migration plan. Then perform mod_build_all. Then perform mod_upgrade_all by passing the recipe_id. Then perform mod_apply_upgrade_all."
+                query = f"Perform an analysis of the projects by passing the project_path from user preferences. Then find a migration plan for the latest Spring Boot version. Then build the projects by passing the project_path from user preferences. Then perform mod_upgrade_all by passing the recipe_id. Then perform mod_apply_upgrade_all."
 
                 logger.info(f"Starting with query: {query}")
                 
