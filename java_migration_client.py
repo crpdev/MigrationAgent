@@ -9,6 +9,7 @@ from mcp.client.stdio import stdio_client
 import google.generativeai as genai
 import win32api
 import win32con
+import ast
 
 # Configure logging
 log_dir = "logs"
@@ -25,6 +26,35 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+def parse_function_call_params(param_parts: list[str]) -> dict:
+    """
+    Parses key=value parts from the FUNCTION_CALL format.
+    Supports nested keys like input.string=foo and list values like input.int_list=[1,2,3]
+    Returns a nested dictionary.
+    """
+    result = {}
+    logger.info(f"Param parts: {param_parts}")
+    for part in param_parts:
+        if "=" not in part:
+            raise ValueError(f"Invalid parameter format (expected key=value): {part}")
+
+        key, value = part.split("=", 1)
+
+        # Try to parse as Python literal (int, float, list, etc.)
+        try:
+            parsed_value = ast.literal_eval(value)
+        except Exception:
+            parsed_value = value.strip()
+
+        # Support nested keys like input.string
+        keys = key.split(".")
+        current = result
+        for k in keys[:-1]:
+            current = current.setdefault(k, {})
+        current[keys[-1]] = parsed_value
+    logger.info(f"Result: {result}")
+    return result
 
 # Load environment variables from .env file
 load_dotenv()
@@ -159,8 +189,8 @@ Available tools:
 {tools_description}
 
 Respond with EXACTLY ONE of these formats:
-1. For function calls:
-   FUNCTION_CALL: function_name|param1|param2|...
+1. For function calls (using key=value format):
+   FUNCTION_CALL: function_name|param1=value1|param2=value2|...
    The parameters must match the required input types for the function.
    
    Example: for analyzeProject(), use:
@@ -172,8 +202,8 @@ Respond with EXACTLY ONE of these formats:
    Example: For mod_build_all(), use:
    FUNCTION_CALL: mod_build_all
 
-   Example: For mod_upgrade_all(), use:
-   FUNCTION_CALL: mod_upgrade_all
+   Example: For mod_upgrade_all(recipe_id: str), use:
+   FUNCTION_CALL: mod_upgrade_all|recipe_id=UpgradeSpringBoot_3_2
    
    Example: For mod_apply_upgrade_all(), use:
    FUNCTION_CALL: mod_apply_upgrade_all
@@ -186,7 +216,7 @@ Make sure to provide parameters in the correct order as specified in the functio
 
                 # Initial query for math operation
                 projects_base_path = os.getenv("PROJECTS_BASE_PATH")
-                query = f"Perform an analysis of the projects. Then send spring_boot_version to decide the migration plan. Then perform mod_build_all. Then perform mod_upgrade_all. Then perform mod_apply_upgrade_all."
+                query = f"Perform an analysis of the projects. Then send spring_boot_version to decide the migration plan. Then perform mod_build_all. Then perform mod_upgrade_all by passing the recipe_id. Then perform mod_apply_upgrade_all."
 
                 logger.info(f"Starting with query: {query}")
                 
@@ -224,18 +254,22 @@ Make sure to provide parameters in the correct order as specified in the functio
                         length = len(params)
                         logger.info(f"Length of params: {length}")
                         logger.info(f"Calling function {func_name} with params {params}")
+                        logger.info(f"Calling function parse_function_call_params with params {params}")
+                        arguments = parse_function_call_params(params)
+                        logger.info(f"Final arguments: {arguments}")
+                        logger.info(f"Calling tool {func_name}")
                         try:
                             # Determine which session to use based on the function name
                             if func_name in [tool.name for tool in moderne_tools]:
                                 if length == 0:
                                     result = await moderne_session.call_tool(func_name)
                                 else:
-                                    result = await moderne_session.call_tool(func_name, arguments={"arg1": "value"})
+                                    result = await moderne_session.call_tool(func_name, arguments=arguments)
                             elif func_name in [tool.name for tool in maven_tools]:
                                 if length == 0:
                                     result = await maven_session.call_tool(func_name)
                                 else:
-                                    result = await maven_session.call_tool(func_name, params)
+                                    result = await maven_session.call_tool(func_name, arguments=arguments)
                             else:
                                 logger.error(f"Unknown function: {func_name}")
                                 continue

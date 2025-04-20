@@ -151,9 +151,9 @@ def mod_build_all() -> dict:
         return {"success": False, "error": str(e)}
 
 @mcp.tool(name="modUpgradeAll", description="Upgrade all projects using specified recipe")
-def mod_upgrade_all() -> dict:
+def mod_upgrade_all(recipe_id: str) -> dict:
     """Upgrade all projects using specified recipe."""
-    logger.info(f"Starting modUpgradeAll with recipe: UpgradeSpringBoot_3_4")
+    logger.info(f"Starting modUpgradeAll with recipe: {recipe_id}")
     
     try:
         projects = get_all_projects()
@@ -166,8 +166,8 @@ def mod_upgrade_all() -> dict:
         
         for project in projects:
             logger.info(f"Upgrading project: {project}")
-            result = mod_upgrade(project, "UpgradeSpringBoot_3_4")
-            results.append({
+            result = mod_upgrade(project, recipe_id)
+            results.append({    
                 "project": project,
                 "success": result["success"],
                 "error": result.get("error", None)
