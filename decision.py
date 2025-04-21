@@ -168,6 +168,7 @@ Examples of VALID responses (each is ONE line with NO additional text):
 FUNCTION_CALL: analyzeProject|project_path={user_prefs['project_path']}
 FUNCTION_CALL: migrationPlan
 FUNCTION_CALL: modUpgradeAll|project_path={user_prefs['project_path']}|recipe_id=org.openrewrite.java.spring.boot3.UpgradeSpringBoot_3_2
+FINAL_ANSWER: [Migration completed successfully]
 
 Examples of INVALID responses:
 [X] Here's what we should do next...
