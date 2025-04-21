@@ -5,6 +5,7 @@ import os
 import google.generativeai as genai
 import asyncio
 from models import MemoryState, Decision
+import json
 
 # Configure logging
 log_dir = "logs"
@@ -145,7 +146,7 @@ Current User Preferences:
 Migration Workflow Steps (in order):
 1. analyzeProject - Analyze project
 2. migrationPlan - Generate migration plan
-3. modUpgradeAll - Apply upgrade recipe_id from migrationPlan
+3. modUpgradeAll - Apply upgrade using recipe_id
 
 Current Progress: Step {self.current_step} of 3
 {workflow_hint}
@@ -166,7 +167,7 @@ Choose ONE of these formats:
 Examples of VALID responses (each is ONE line with NO additional text):
 FUNCTION_CALL: analyzeProject|project_path={user_prefs['project_path']}
 FUNCTION_CALL: migrationPlan
-FUNCTION_CALL: modUpgradeAll|project_path={user_prefs['project_path']}|recipe_id=[from_migration_plan]
+FUNCTION_CALL: modUpgradeAll|project_path={user_prefs['project_path']}|recipe_id=org.openrewrite.java.spring.boot3.UpgradeSpringBoot_3_2
 
 Examples of INVALID responses:
 [X] Here's what we should do next...
@@ -197,30 +198,57 @@ Examples of INVALID responses:
             logger.error(f"Error in LLM generation: {e}")
             raise
 
-    def process_llm_response(self, response: str) -> Tuple[str, Dict[str, str]]:
-        """Process LLM responses into structured format"""
-        # Remove any leading/trailing whitespace and get the last line if multiple lines
-        response = response.strip().split('\n')[-1]
-        
+    def process_llm_response(self, response: str, state: MemoryState = None) -> Tuple[str, Dict[str, str]]:
+        """Process LLM response and extract function call details"""
         if response.startswith("FUNCTION_CALL:"):
             parts = response[14:].split("|")
             function_name = parts[0].strip()
-            
-            # Get actual function name and validate
-            actual_function_name = self.get_actual_function_name(function_name)
-            if not self.is_valid_function(actual_function_name):
-                raise ValueError(f"Invalid function name: {function_name}")
-            
             params = {}
+            
+            # Process parameters
             for part in parts[1:]:
                 if "=" in part:
-                    key, value = part.split("=")
-                    params[key.strip()] = value.strip()
-            return ("function", {"name": actual_function_name, "params": params})
+                    key, value = part.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    # Handle recipe_id placeholder replacement
+                    if key == "recipe_id" and value == "[from_migration_plan]" and state and state.context:
+                        recipe_id = state.context.get("recipe_id")
+                        if not recipe_id and "last_action" in state.context:
+                            # Try to extract recipe_id from last action if it was a migrationPlan response
+                            last_action = state.context["last_action"]
+                            if "migrationPlan" in last_action:
+                                try:
+                                    start_idx = last_action.find('{"success"')
+                                    if start_idx != -1:
+                                        end_idx = last_action.find('FUNCTION_CALL: migrationPlan|', start_idx)
+                                        if end_idx == -1:
+                                            end_idx = len(last_action)
+                                        json_str = last_action[start_idx:end_idx].strip()
+                                        if json_str:
+                                            response_data = json.loads(json_str)
+                                            if isinstance(response_data, dict) and 'recipe' in response_data:
+                                                recipe = response_data['recipe']
+                                                if isinstance(recipe, dict) and 'recipe_id' in recipe:
+                                                    recipe_id = recipe['recipe_id']
+                                                    logger.info(f"Extracted recipe_id from last action: {recipe_id}")
+                                except Exception as e:
+                                    logger.error(f"Error extracting recipe_id from last action: {e}")
+                        
+                        if recipe_id:
+                            value = recipe_id
+                            logger.info(f"Using recipe_id: {recipe_id}")
+                        else:
+                            raise ValueError("No recipe_id found in memory. Please run migrationPlan first.")
+                    
+                    params[key] = value
+            
+            return ("function", {"name": function_name, "params": params})
         elif response.startswith("FINAL_ANSWER:"):
             return ("answer", {"message": response[13:].strip()})
         else:
-            raise ValueError(f"Invalid response format. Response must start with 'FUNCTION_CALL:' or 'FINAL_ANSWER:'. Got: {response}")
+            raise ValueError(f"Invalid response format: {response}")
 
     def get_upgrade_recipe_id(self, spring_boot_version: str) -> str:
         """Determine the appropriate upgrade recipe based on Spring Boot version"""
@@ -244,55 +272,19 @@ Examples of INVALID responses:
         return "UpgradeSpringBoot_3_2"  # Default to latest if version format is unknown
 
     async def make_decision(self, state: MemoryState, query: str) -> Decision:
-        """Generate decision using LLM based on state and query"""
+        """Make decision based on current state and query"""
         try:
-            # If previous action was migrationPlan, extract recipe_id from result
-            last_action = state.context.get("last_action", "")
-            if "migrationPlan" in last_action:
-                try:
-                    # Parse the JSON response from migrationPlan
-                    import json
-                    response_data = json.loads(last_action)
-                    if isinstance(response_data, dict):
-                        recipe_id = response_data.get("recipe_id")
-                        if recipe_id:
-                            state = Memory.save_to_memory(state, "recipe_id", recipe_id)
-                            logger.info(f"Extracted recipe_id {recipe_id} from migrationPlan response")
-                except Exception as e:
-                    logger.error(f"Error parsing migrationPlan response: {e}")
-
-            # Create system prompt with current context
+            # Create system prompt
             system_prompt = self.create_system_prompt(state)
             
-            # Combine system prompt and query
-            full_prompt = f"{system_prompt}\n\nQuery: {query}"
-            logger.info(f"Sending prompt to LLM:\n{full_prompt}")
-            
-            # Get LLM response
-            llm_response = await self.generate_llm_response(full_prompt)
+            # Generate LLM response
+            llm_response = await self.generate_llm_response(f"{system_prompt}\n\nQuery: {query}")
             logger.info(f"LLM Response: {llm_response}")
             
             # Process response
-            response_type, data = self.process_llm_response(llm_response)
+            response_type, data = self.process_llm_response(llm_response, state)
             
-            # If this is modUpgradeAll, ensure we have a valid recipe_id from migrationPlan
-            if response_type == "function" and data["name"] == "modUpgradeAll":
-                recipe_id = state.context.get("recipe_id")
-                if not recipe_id:
-                    logger.error("No recipe_id found in memory. Please run migrationPlan first.")
-                    return Decision(
-                        type="answer",
-                        data={"message": "Error: No recipe_id available. Please run migrationPlan first to determine the appropriate upgrade recipe."},
-                        context={"error": "missing_recipe_id"}
-                    )
-                data["params"]["recipe_id"] = recipe_id
-                logger.info(f"Using recipe_id {recipe_id} from migrationPlan")
-            
-            # Update workflow state if it's a function call
-            if response_type == "function":
-                self.update_workflow_state(data["name"])
-            
-            # Create context
+            # Create context for decision
             context = {
                 "preferences": {
                     "project_path": str(state.preferences.project_path),
@@ -303,19 +295,37 @@ Examples of INVALID responses:
                     "current_step": self.current_step,
                     "total_steps": len(self.workflow_steps)
                 },
-                "memory": state.context
+                "memory": state.context or {},
+                "last_action": state.context.get("last_action") if state.context else None
             }
             
-            return Decision(
-                type=response_type,
-                data=data,
-                context=context
-            )
-            
+            if response_type == "function":
+                # Update workflow state
+                self.update_workflow_state(data["name"])
+                
+                # Validate function exists
+                if not self.is_valid_function(data["name"]):
+                    raise ValueError(f"Invalid function: {data['name']}")
+                
+                # Map to actual function name
+                data["name"] = self.get_actual_function_name(data["name"])
+                
+                return Decision(
+                    type="function",
+                    data=data,
+                    context=context
+                )
+            else:
+                return Decision(
+                    type="answer",
+                    data=data,
+                    context=context
+                )
+                
         except Exception as e:
             logger.error(f"Error in make_decision: {e}")
             return Decision(
                 type="answer",
-                data={"message": f"Error in decision making: {str(e)}"},
-                context={"error": str(e)}
+                data={"message": f"Error: {str(e)}"},
+                context={"error": str(e), "workflow_state": self.current_step}
             ) 

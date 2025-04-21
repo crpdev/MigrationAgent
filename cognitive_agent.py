@@ -193,10 +193,18 @@ async def cognitive_cycle(initial_state: MemoryState = None) -> None:
                 await decision_layer.initialize_tools(action_layer.moderne_tools, action_layer.maven_tools)
 
                 # Perception - Get user preferences
-                preferences = Perception.get_user_input()
+                perception = Perception()
+                preferences = perception.get_user_input()
                 
-                # Initialize Memory
-                state = Memory.create_initial_state(preferences) if not initial_state else initial_state
+                # Initialize Memory and store preferences
+                memory = Memory()
+                memory.store_user_preferences(preferences)
+                
+                # Create initial state
+                state = MemoryState(
+                    preferences=preferences,
+                    context={}
+                ) if not initial_state else initial_state
                 
                 # Initial query based on preferences
                 initial_query = f"""Analyze project at {preferences.project_path}."""
@@ -216,8 +224,50 @@ async def cognitive_cycle(initial_state: MemoryState = None) -> None:
                     # Action
                     result = await action_layer.execute_action(decision)
                     
-                    # Update Memory
-                    state = Memory.save_to_memory(state, "last_action", result)
+                    # Update Memory and State
+                    memory.store_last_action(result)
+                    
+                    # Extract recipe_id from migrationPlan response if present
+                    if "migrationPlan" in result:
+                        try:
+                            # Find the JSON content in the response
+                            start_idx = result.find('{"success"')
+                            if start_idx != -1:
+                                end_idx = result.find('FUNCTION_CALL: migrationPlan|', start_idx)
+                                if end_idx == -1:
+                                    end_idx = len(result)
+                                json_str = result[start_idx:end_idx].strip()
+                                if json_str:
+                                    response_data = json.loads(json_str)
+                                    if isinstance(response_data, dict) and 'recipe' in response_data:
+                                        recipe = response_data['recipe']
+                                        if isinstance(recipe, dict) and 'recipe_id' in recipe:
+                                            recipe_id = recipe['recipe_id']
+                                            # Store recipe_id in both memory and state
+                                            memory.store_recipe_id(recipe_id)
+                                            new_context = dict(state.context or {})
+                                            new_context['recipe_id'] = recipe_id
+                                            state = MemoryState(
+                                                preferences=state.preferences,
+                                                context=new_context
+                                            )
+                                            logger.info(f"Successfully extracted and stored recipe_id: {recipe_id}")
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Failed to parse JSON from migrationPlan response: {e}")
+                        except Exception as e:
+                            logger.error(f"Error extracting recipe_id from migrationPlan response: {e}")
+                    
+                    # If this is a modUpgradeAll call, ensure recipe_id is properly set
+                    if "modUpgradeAll" in result and "[from_migration_plan]" in result:
+                        recipe_id = memory.get_recipe_id()
+                        if recipe_id:
+                            # Replace placeholder with actual recipe_id
+                            result = result.replace("[from_migration_plan]", recipe_id)
+                            logger.info(f"Using recipe_id for modUpgradeAll: {recipe_id}")
+                        else:
+                            logger.error("No recipe_id available for modUpgradeAll")
+                            result = "FINAL_ANSWER: Error: No recipe_id available. Please run migrationPlan first."
+                            break
                     
                     # Update query for next iteration
                     if result.startswith("FINAL_ANSWER:"):
