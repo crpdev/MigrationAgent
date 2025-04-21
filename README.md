@@ -132,6 +132,7 @@ python cognitive_agent.py
    - Reports upgrade results
    - Validates successful completion
    - Provides clear success/failure status
+   - Immediate completion on success
 
 ## State Management
 
@@ -150,9 +151,10 @@ The system implements robust state management:
 
 3. **Context Management**
    - Maintains workflow state
-   - Tracks execution progress
+   - Tracks execution progress (up to 4 iterations)
    - Stores tool responses
    - Manages error states
+   - Immediate success detection
 
 ## Available Tools
 
@@ -249,18 +251,21 @@ The agent provides clear completion states:
    - Positive success status in response
    - Clear success message shown
    - Process ends immediately
+   - No iteration limit applies on success
 
 2. **Failed Migration**
    - Upgrade errors detected
    - Negative success status
    - Detailed error message provided
    - Process terminates with failure
+   - Immediate failure detection
 
 3. **Incomplete Migration**
-   - Maximum iterations reached
+   - Maximum iterations (4) reached
    - Last action status checked
    - Appropriate status message shown
    - Logs available for review
+   - Only occurs if success/failure not detected
 
 ## Response Format
 
@@ -278,4 +283,12 @@ These responses indicate:
 - Final migration status
 - Success/failure of upgrades
 - Next steps if needed
-- Reference to logs for details 
+- Reference to logs for details
+- Immediate completion status
+
+## Additional Notes
+
+- The agent's iteration handling is based on the number of times it can execute the migration workflow before reaching a conclusion.
+- The number of iterations is set to 4, but this can be adjusted based on project complexity or user preference.
+- The agent's completion states are designed to provide clear feedback on the migration process, including immediate success or failure detection.
+- The response format includes immediate completion status, which helps users understand the result of the migration process immediately after the agent's conclusion. 
