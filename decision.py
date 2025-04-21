@@ -177,6 +177,7 @@ Examples of INVALID responses:
     FUNCTION_CALL: migrationPlan
 [X] FUNCTION_CALL: modUpgradeAll
     Some additional explanation
+[X] FINAL_ANSWER: [Maximum iterations reached. Please review the migration progress.] 
 [X] Multiple responses in one reply
 """
         

@@ -211,7 +211,7 @@ async def cognitive_cycle(initial_state: MemoryState = None) -> None:
                 
                 # Main cognitive cycle
                 iteration = 0
-                max_iterations = 3
+                max_iterations = 4
                 current_query = initial_query
                 
                 while iteration < max_iterations:
@@ -223,6 +223,41 @@ async def cognitive_cycle(initial_state: MemoryState = None) -> None:
                     
                     # Action
                     result = await action_layer.execute_action(decision)
+                    
+                    # Check if this is a modUpgradeAll action and process its result immediately
+                    if "modUpgradeAll" in str(decision):
+                        # Look for the tool execution result in the logs
+                        log_lines = result.split('\n')
+                        for line in log_lines:
+                            if "Tool execution result:" in line:
+                                try:
+                                    # Extract the JSON content from the log line
+                                    content_start = line.find('text=\'') + 6
+                                    if content_start > 6:
+                                        content_end = line.find('\'', content_start)
+                                        if content_end > content_start:
+                                            json_str = line[content_start:content_end]
+                                            logger.info(f"Processing modUpgradeAll response: {json_str}")
+                                            response_data = json.loads(json_str)
+                                            
+                                            if isinstance(response_data, dict):
+                                                success = response_data.get('success', False)
+                                                successful_upgrades = response_data.get('successful_upgrades', 0)
+                                                
+                                                if success and successful_upgrades > 0:
+                                                    logger.info("Migration completed successfully")
+                                                    print("FINAL_ANSWER: [Migration completed successfully. All upgrades were applied.]")
+                                                    return
+                                                elif not success:
+                                                    logger.error("Migration failed")
+                                                    print("FINAL_ANSWER: [Migration failed. Please check the logs for details.]")
+                                                    return
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"Error parsing modUpgradeAll JSON response: {e}")
+                                except Exception as e:
+                                    logger.error(f"Error processing modUpgradeAll response: {e}")
+                                    logger.error(f"Line was: {line}")
+                                break
                     
                     # Update Memory and State
                     memory.store_last_action(result)
@@ -257,25 +292,6 @@ async def cognitive_cycle(initial_state: MemoryState = None) -> None:
                         except Exception as e:
                             logger.error(f"Error extracting recipe_id from migrationPlan response: {e}")
                     
-                    # Check for successful modUpgradeAll completion
-                    if "modUpgradeAll" in result:
-                        try:
-                            start_idx = result.find('{"success"')
-                            if start_idx != -1:
-                                json_str = result[start_idx:].strip()
-                                response_data = json.loads(json_str)
-                                if isinstance(response_data, dict):
-                                    if response_data.get('success') and response_data.get('successful_upgrades', 0) > 0:
-                                        logger.info("Migration completed successfully")
-                                        print("FINAL_ANSWER: [Migration completed successfully. All upgrades were applied.]")
-                                        break
-                                    elif not response_data.get('success'):
-                                        logger.error("Migration failed")
-                                        print("FINAL_ANSWER: [Migration failed. Please check the logs for details.]")
-                                        break
-                        except Exception as e:
-                            logger.error(f"Error parsing modUpgradeAll response: {e}")
-                    
                     # If this is a modUpgradeAll call, ensure recipe_id is properly set
                     if "modUpgradeAll" in result and "[from_migration_plan]" in result:
                         recipe_id = memory.get_recipe_id()
@@ -299,26 +315,8 @@ async def cognitive_cycle(initial_state: MemoryState = None) -> None:
                     iteration += 1
                 
                 if iteration >= max_iterations:
-                    logger.warning("Reached maximum iterations")
-                    # Check the last action for success before showing generic message
-                    last_action = memory.get_last_action()
-                    if last_action and "modUpgradeAll" in last_action:
-                        try:
-                            start_idx = last_action.find('{"success"')
-                            if start_idx != -1:
-                                json_str = last_action[start_idx:].strip()
-                                response_data = json.loads(json_str)
-                                if isinstance(response_data, dict) and response_data.get('success') and response_data.get('successful_upgrades', 0) > 0:
-                                    print("FINAL_ANSWER: [Migration completed successfully. All upgrades were applied.]")
-                                else:
-                                    print("FINAL_ANSWER: [Migration process incomplete. Please review the logs for details.]")
-                            else:
-                                print("FINAL_ANSWER: [Maximum iterations reached. Please review the migration progress.]")
-                        except Exception as e:
-                            logger.error(f"Error parsing final modUpgradeAll response: {e}")
-                            print("FINAL_ANSWER: [Maximum iterations reached. Please review the migration progress.]")
-                    else:
-                        print("FINAL_ANSWER: [Maximum iterations reached. Please review the migration progress.]")
+                    logger.warning("Reached maximum iterations without clear success/failure")
+                    print("FINAL_ANSWER: [Maximum iterations reached. Please review the migration progress.]")
                 
     except Exception as e:
         logger.error(f"Error in cognitive cycle: {e}")
