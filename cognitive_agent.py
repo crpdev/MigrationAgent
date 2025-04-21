@@ -199,7 +199,7 @@ async def cognitive_cycle(initial_state: MemoryState = None) -> None:
                 state = Memory.create_initial_state(preferences) if not initial_state else initial_state
                 
                 # Initial query based on preferences
-                initial_query = f"""Analyze the Java project at {preferences.project_path}. Then create a migration plan to get the recipe_id. Then upgrade by passing the recipe_id. Then apply the last recipe run to all projects by performing mod_apply_upgrade_all"""
+                initial_query = f"""Analyze project at {preferences.project_path}."""
                 
                 # Main cognitive cycle
                 iteration = 0
