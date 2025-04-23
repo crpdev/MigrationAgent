@@ -95,21 +95,50 @@ python cognitive_agent.py
 ```
 
 2. Enter the required information when prompted:
-   - Project path (full path to Java project)
+   - Project path (absolute or relative path to Java project)
    - Migration type (java/python)
    - Release type (stable/rc)
 
-3. If you have saved preferences:
+3. The agent will:
+   - Validate and normalize the project path
+   - Verify project directory exists
+   - Convert relative paths to absolute
+   - Ensure consistent path usage
+
+4. If you have saved preferences:
    - Choose to use all saved preferences (y)
    - Select specific preferences to update (select)
    - Enter all new preferences (n)
+   - Paths will be validated and normalized
 
-4. The agent will:
+5. The migration process will:
    - Analyze the project structure
    - Determine Spring Boot version
    - Create a migration plan
    - Extract and store recipe_id
    - Execute necessary upgrades
+
+## Path Handling
+
+The agent implements robust path handling:
+
+1. **Path Validation**
+   - Checks if project path exists
+   - Converts relative paths to absolute
+   - Normalizes path separators
+   - Early error detection for invalid paths
+
+2. **Path Consistency**
+   - Uses normalized paths throughout execution
+   - Maintains consistent path format
+   - Updates paths in tool parameters
+   - Preserves path validity across steps
+
+3. **Error Handling**
+   - Clear messages for path issues
+   - Early exit on invalid paths
+   - Proper logging of path problems
+   - User-friendly error reporting
 
 ## Migration Workflow
 
